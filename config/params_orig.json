@@ -1,0 +1,45 @@
+{
+    "global": {
+        "debug": "0",
+        "debug_path": "http://matreshki.my/cli/test_files/",
+        "full_import": "1",
+        "log_level": "5",
+        "log_type": "print",
+        "log_file": "",
+        "lang_code": "ru-RU",
+        "user_id": "617",
+        "primary_vendor_id": "2",
+        "currency_id": "1",
+        "tax_id": "1",
+        "product_label_new": "1",
+        "filters_group": "2",
+        "fields": {
+            "matherial": "1",
+            "size": "2",
+            "group": "3",
+            "amount": "4",
+            "weight": "5",
+            "volume": "6",
+            "sizex": "7",
+            "sizey": "8",
+            "sizez": "9",
+            "print": "10"
+        },
+        "attribs": {
+            "size": "1",
+            "print": "2"
+        },
+        "attribs_defaults": {
+            "size": "",
+            "print": "70,71"
+        }
+    },
+    "portobello": {
+        "vendor_id": "3"
+    },
+    "project111": {
+        "vendor_id": "2",
+        "login": "LOGIN",
+        "password": "PASSWORD"
+    }
+}
