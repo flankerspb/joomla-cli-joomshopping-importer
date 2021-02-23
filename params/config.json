@@ -1,7 +1,7 @@
 {
     "global": {
         "debug": "1",
-        "debug_path": "http://matreshki.my/cli/test_files/",
+        "debug_path": "http://localhost/test_files/",
         "full_import": "0",
         "log_level": "10",
         "log_type": "print",
@@ -34,10 +34,10 @@
             "print": "70,71"
         }
     },
-    "Portobello": {
+    "portobello": {
         "vendor_id": "3"
     },
-    "Project111": {
+    "project111": {
         "vendor_id": "2",
         "login": "Login",
         "password": "Password"
