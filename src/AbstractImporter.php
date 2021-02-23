@@ -1,61 +1,54 @@
 <?php
 
-// TODO: Refactor
+namespace JoomShoppingImporter;
 
-defined('FL_JSHOP_IMPORTER') or die();
+use JFactory;
+use JFilterOutput;
+use JModelLegacy;
+use JSFactory;
+use JTable;
+use phpthumb;
 
-abstract class JoomShoppingImporter
+abstract class AbstractImporter implements ImporterInterface
 {
-	const NAME = 'Importer';
-
-	const CFG_PARAMS = __DIR__ . '/../config/params.json';
-	const CFG_CATEGORIES = __DIR__ . '/../config/categories.json';
-
 	const IMPORT_TIMEOUT = 0;
 
-	const LOG_LEVEL = [
-		0 => false,           // Not log
-		1 => 'Error',         // Errors only
-		//1 => 'Important',   // + Important
-		2 => 'Warning',       // + Warnings
-		3 => 'Attention',     // + Attentions
-		4 => 'Done',          // + Done
-		5 => 'Info',          // + Info
-	];
-
 	const DEFAULTS = [
-		'debug'             => 0,
-		'debug_path'        => 'http://localhost/test_files/',
-		'full_import'       => 0,
-		'log_level'         => 5,
-		'log_type'          => 'print',  // [NULL|print|file]
-		'log_file'          => '',       // in sec
-		'lang_code'         => 'ru-RU',
-		'user_id'           => 617,      // ID joomla пользователя импортера
-		'primary_vendor_id' => 2,        // ID основного поставщика
-		'currency_id'       => 1,        // ID валюты joomshopping
-		'tax_id'            => 1,        // ID налога joomshopping
-		'product_label_new' => 1,        // ID метки "НОВИКА" joomshopping
-		'filters_group'     => 2,        // ID группы фильтров joomshopping
-		'fields'            => [         // joomshopping extra fields ID
-			'matherial' => 1,
-			'size'      => 2,
-			'group'     => 3,
-			'amount'    => 4,
-			'weight'    => 5,
-			'volume'    => 6,
-			'sizex'     => 7,
-			'sizey'     => 8,
-			'sizez'     => 9,
-			'print'     => 10,
+		// joomshopping vendor ID for concat values
+		'primary_vendor_id' => 0,
+
+		'currency_id'       => 0,        // joomshopping currency ID
+		'tax_id'            => 0,        // joomshopping tax ID
+		'product_label_new' => 0,        // joomshopping label new ID
+		'filters_group'     => 0,        // joomshopping ID filters group
+
+		// joomshopping extra fields IDs
+		'fields' => [
+			'matherial' => 0,
+			'size'      => 0,
+			'group'     => 0,
+			'amount'    => 0,
+			'weight'    => 0,
+			'volume'    => 0,
+			'sizex'     => 0,
+			'sizey'     => 0,
+			'sizez'     => 0,
+			'print'     => 0,
+			'dated'     => 0,
+			'color'     => 0,
+			'cover'     => 0,
 		],
-		'attribs'           => [         // ID joomshopping attributes
-			'size'  => 1,
-			'print' => 2,
+
+		// joomshopping attributes IDs
+		'attribs' => [
+			'size'  => 0,
+			'print' => 0,
 		],
-		'attribs_defaults'  => [         // ID joomshopping attribut values
+
+		// joomshopping attribut values default IDs
+		'attribs_defaults' => [
 			'size'  => '',
-			'print' => '70,71',
+			'print' => '',
 		]
 	];
 
@@ -70,14 +63,7 @@ abstract class JoomShoppingImporter
 		'productImages'      => '#__jshopping_products_images',
 	];
 
-	protected static $params;
-	protected static $children = [];
-
-	protected static $timeZone;
-
-	protected static $jshopConfig;
-
-	protected static $counter = [
+	protected $counter = [
 		'categories'         => 0,
 		'manufacturers'      => 0,
 		'productFields'      => 0,
@@ -85,217 +71,76 @@ abstract class JoomShoppingImporter
 		'attrValues'         => 0,
 	];
 
+	protected $id;
+
+	protected $name;
+
+	protected $srcPath;
+
+	protected $timeZone;
+
+	protected $config;
+
+	protected $logger;
+
+	protected $full_import = true;
+
 	protected $report = [];
 
 
-	final protected function __construct()
+	abstract protected function getSrcPath() : string;
+
+
+	final public function __construct(array $config, ?Logger $logger = null)
 	{
-		//Get Site root dir
-		$root_dir = self::getSiteRoot();
+		$this->config = $config;
 
-		// Load system defines
-		if (file_exists($root_dir . '/administrator/defines.php'))
+		if(!array_key_exists('vendor_id', $config))
 		{
-			$root_dir . '/administrator/defines.php';
+			throw new \Exception('ERROR! Importer ' . $this->getName() . ' not configured!');
 		}
 
-		if (!defined('_JDEFINES'))
+		$this->id = $config['vendor_id'];
+
+		if($logger)
 		{
-			define('JPATH_BASE', $root_dir . DIRECTORY_SEPARATOR . 'administrator');
-			require_once JPATH_BASE . '/includes/defines.php';
-		}
-
-		require_once JPATH_BASE . '/includes/framework.php';
-		require_once JPATH_BASE . '/includes/helper.php';
-
-		// Instantiate the application.
-		JFactory::getApplication('administrator');
-		$lang = JFactory::getLanguage();
-		$lang->setDefault(self::$params['global']['lang_code']);
-		$lang->setLanguage(self::$params['global']['lang_code']);
-
-		//Set timeZone
-		self::$timeZone = JFactory::getConfig()->get('offset', null);
-
-		// Instantiate jshopping.
-		define('JPATH_COMPONENT', JPATH_ADMINISTRATOR . '/components/com_jshopping');
-		define('JPATH_COMPONENT_SITE', JPATH_SITE . '/components/com_jshopping');
-		define('JPATH_COMPONENT_ADMINISTRATOR', JPATH_COMPONENT);
-
-		JTable::addIncludePath(JPATH_COMPONENT_SITE . '/tables');
-		require_once(JPATH_COMPONENT_SITE . '/lib/factory.php');
-		require_once(JPATH_COMPONENT_ADMINISTRATOR . '/functions.php');
-		require_once(JPATH_COMPONENT_ADMINISTRATOR . '/controllers/baseadmin.php');
-		require_once(JPATH_COMPONENT_SITE . '/lib/image.lib.php');
-
-		JModelLegacy::addIncludePath(JPATH_COMPONENT . '/models');
-		JModelLegacy::addIncludePath(JPATH_COMPONENT_SITE . '/models');
-
-//		$adminlang = $lang;
-		JSFactory::setLoadUserId(self::$params['global']['user_id']);
-		self::$jshopConfig = JSFactory::getConfig();
-
-		//fix redirect then product save (non autorized user)
-		self::$jshopConfig->admin_show_vendors = 0;
-
-		foreach (self::$counter as $key => $value)
-		{
-			self::$counter[$key] = self::countItems($key);
-		}
-	}
-
-
-	final public static function getInstance($instance)
-	{
-		self::init();
-
-		$class = __CLASS__ . ucfirst($instance);
-
-		return new $class();
-	}
-
-
-	final public static function init($options = [])
-	{
-		static $init = false;
-
-		if ($init)
-		{
-			return;
-		}
-
-		$init = true;
-
-		$defaults           = [];
-		$defaults['global'] = self::DEFAULTS;
-
-		$files = array_map('basename', glob(__DIR__ . '/' . __CLASS__ . '?*.php', GLOB_BRACE));
-
-		foreach ($files as $file)
-		{
-			include($file);
-
-			$class = explode('.', $file)[0];
-
-			self::$children[$class::NAME] = $class;
-
-			$defaults[$class::NAME] = $class::DEFAULTS;
-		}
-
-		$params = [];
-
-		if (file_exists(self::CFG_PARAMS))
-		{
-			$params = json_decode(file_get_contents(self::CFG_PARAMS), true);
-		}
-
-		if ($params)
-		{
-			$params = self::mergeParams($defaults, $params);
+			$this->logger = $logger;
 		}
 		else
 		{
-			$params = $defaults;
+			$this->logger = new Logger();
+			$this->logger->off();
 		}
 
-		if ($options)
+		if(defined('IMPORTER_DEBUG_SRC_PATH'))
 		{
-			$params = self::mergeParams($params, ['global' => $options]);
-		}
-
-		self::$params = $params;
-
-		foreach (self::$children as $child => $class)
-		{
-			$class::$params = self::mergeParams($params['global'], $params[$child]);
-
-			$class::$src_path = $class::getSrcPath($params['global']['debug']);
-		}
-	}
-
-
-	protected static function getSiteRoot($dir = __DIR__, $prev_dir = '')
-	{
-		static $root_dir = null;
-
-		if ($root_dir)
-		{
-			return $root_dir;
-		}
-
-		$needle = ['includes', 'layouts', 'libraries', 'media', 'plugins'];
-
-		if ($prev_dir == $dir)
-		{
-			return null;
-		}
-
-		$curr_dirs = scandir($dir);
-
-		if (array_intersect($needle, $curr_dirs) == $needle)
-		{
-			$root_dir = $dir;
-
-			return $root_dir;
+			$this->srcPath = IMPORTER_DEBUG_SRC_PATH . '/' . $this->getName() . '/';
 		}
 		else
 		{
-			$prev_dir = $dir;
-
-			return self::getSiteRoot(dirname($dir), $prev_dir);
+			$this->srcPath = $this->getSrcPath();
 		}
-	}
 
-
-	//refactor
-	protected static function getSrcPath($debug)
-	{
-		return static::$params['debug_path'];
-	}
-
-
-	static function mergeParams(array $array1, array $array2)
-	{
-		$merged = $array1;
-
-		foreach ($array2 as $key => & $value)
+		if(defined('IMPORTER_FULL_IMPORT'))
 		{
-			if (is_array($value) && isset($merged[$key]) && is_array($merged[$key]))
-			{
-				$merged[$key] = self::mergeParams($merged[$key], $value);
-			}
-			elseif (is_numeric($key))
-			{
-				if (!in_array($value, $merged))
-				{
-					$merged[] = $value;
-				}
-			}
-			else
-			{
-				$merged[$key] = $value;
-			}
+			$this->full_import = IMPORTER_FULL_IMPORT;
 		}
 
-		return $merged;
+		$this->timeZone = JFactory::getConfig()->get('offset', null);
+
+		foreach ($this->counter as $key => $value)
+		{
+			$this->counter[$key] = $this->countItems($key);
+		}
 	}
 
 
-	//refactor
-	public static function getCategories($child)
+	// @TODO refactor
+	public function updateCategories() : bool
 	{
-		$class = __CLASS__ . $child;
+		$this->logger->methodStart();
 
-		return $class::getCategories();
-	}
-
-
-	//refactor
-	public function updateCategories()
-	{
-		self::logMethodStart(__FUNCTION__);
-
-		$categories = static::getCategories();
+		$categories = $this->getCategories();
 
 		if (count($categories))
 		{
@@ -317,41 +162,41 @@ abstract class JoomShoppingImporter
 
 			$this->report();
 
-			self::logMethodComplete(__FUNCTION__);
+			$this->logger->MethodComplete();
 
 			return true;
 		}
 
-		self::logMethodComplete(__FUNCTION__);
+		$this->logger->MethodComplete();
 
 		return false;
 	}
 
 
-	protected function importCategory($cat)
+	protected function importCategory(array $cat) : void
 	{
 		static $model;
 
 		if (!$model)
 		{
 			$model = $this->getModel('categories');
-			// $this->setState(0, 'categories', 'fl_source=' . static::$params['vendor_id']);
+			// $this->setState(0, 'categories', 'fl_source=' . $this->id);
 		}
 
-		$code = static::$params['vendor_id'] . '_' . $cat['id'];
-		$name = $cat['new_title'] ? $cat['new_title'] : $cat['title'];
+		$code = $this->id . '_' . $cat['id'];
+		$name = $cat['new_title'] ?: $cat['title'];
 
 		if ($cat['action'] == 'move')
 		{
 			$val = explode(',', $cat['value']);
 
 			$pid = $val[0];
-			$vid = $val[1] ? $val[1] : static::$params['vendor_id'];
+			$vid = $val[1] ? $val[1] : $this->id;
 		}
 		else
 		{
 			$pid = $cat['parent_id'];
-			$vid = static::$params['vendor_id'];
+			$vid = $this->id;
 		}
 
 		$parent    = $this->getCategory($pid, $vid);
@@ -359,8 +204,8 @@ abstract class JoomShoppingImporter
 
 		$item = array(
 			'fl_code'            => $code,
-			'fl_source'          => static::$params['vendor_id'],
-			'fl_update_date'     => JFactory::getDate('now', self::$timeZone)->toSql(true),
+			'fl_source'          => $this->id,
+			'fl_update_date'     => JFactory::getDate('now', $this->timeZone)->toSql(true),
 			'category_parent_id' => ($parent_id == null ? 0 : $parent_id),
 			'category_publish'   => 1,
 			'name_ru-RU'         => $name,
@@ -378,7 +223,7 @@ abstract class JoomShoppingImporter
 		}
 		else
 		{
-			$item['ordering'] = ++self::$counter['categories'];
+			$item['ordering'] = ++$this->counter['categories'];
 
 			$this->report[3]['Categories imported']         += 1;
 			$this->report[5]['Imported category: ' . $name] = 0;
@@ -388,24 +233,25 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected static function prepareContent($string)
+	protected static function prepareContent(string $string) : string
 	{
 		return preg_replace('~<a\b[^>]*+>|</a\b[^>]*+>~', '', $string);
 	}
 
-	protected static function getTable($type, $prefix = 'jshop', $config = [])
+
+	protected static function getTable(string $type, string $prefix = 'jshop', array $config = []) : ?JTable
 	{
 		return JTable::getInstance($type, $prefix, $config);
 	}
 
 
-	protected static function getModel($type, $prefix = 'JshoppingModel', $config = [])
+	protected static function getModel(string $type, string $prefix = 'JshoppingModel', array $config = []) : ?JModelLegacy
 	{
 		return JModelLegacy::getInstance($type, $prefix, $config);
 	}
 
 
-	protected function countItems($type, $where = [])
+	protected static function countItems($type, $where = []) : int
 	{
 		$db = JFactory::getDbo();
 
@@ -459,7 +305,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function getItems($type, $column = 'fl_code', $where = '')
+	protected function getItems($type, $column = 'fl_code', $where = '') : array
 	{
 		$db = JFactory::getDbo();
 
@@ -489,13 +335,14 @@ abstract class JoomShoppingImporter
 			$value = explode(',', $categories[$vendor_id][$cat_id]['value']);
 
 			$cat_id    = $value[0];
-			$vendor_id = $value[1] ? $value[1] : static::$params['vendor_id'];
+			$vendor_id = $value[1] ? $value[1] : $this->id;
 
 			return $this->getCategory($cat_id, $vendor_id);
 		}
 
 		return $this->getItem($vendor_id . '_' . $cat_id, 'categories');
 	}
+
 
 	protected function getProductCategory($cat_id, $vendor_id)
 	{
@@ -509,7 +356,7 @@ abstract class JoomShoppingImporter
 					$value = explode(',', $categories[$vendor_id][$cat_id]['value']);
 
 					$cat_id    = $value[0];
-					$vendor_id = $value[1] ? $value[1] : static::$params['vendor_id'];
+					$vendor_id = $value[1] ? $value[1] : $this->id;
 
 					return $this->getProductCategory($cat_id, $vendor_id);
 
@@ -518,7 +365,7 @@ abstract class JoomShoppingImporter
 					$category = static::getCategories()[$cat_id];
 
 					$cat_id    = $category['parent_id'];
-					$vendor_id = static::$params['vendor_id'];
+					$vendor_id = $this->id;
 
 					return $this->getProductCategory($cat_id, $vendor_id);
 
@@ -534,7 +381,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function setState($flag, $type, $conditions)
+	protected function setState($flag, $type, $conditions) : void
 	{
 		switch ($type)
 		{
@@ -568,7 +415,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function setValues($type, $conditions, $fields)
+	protected function setValues($type, $conditions, $fields) : void
 	{
 		$db = JFactory::getDbo();
 
@@ -582,7 +429,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function deleteItems($type, $key, $where = [])
+	protected function deleteItems($type, $key, $where = []) : void
 	{
 		$to_delete = $this->getList($type, $key, $key, $where);
 
@@ -609,7 +456,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function setImages($images, $id, $prefix, $src)
+	protected function setImages(array $images, int $id, string $prefix, string $src) :array
 	{
 		static $lastTime = 0;
 
@@ -628,7 +475,7 @@ abstract class JoomShoppingImporter
 		$result   = [];
 		$source   = [];
 		$ordering = [];
-		$main_image;
+		$main_image = null;
 
 		$remove = $id ? self::getList('productImages', 'image_id', 'image_name', ['product_id=' . $id]) : [];
 
@@ -774,7 +621,7 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected function resizeImage($src, $width, $height, $dest)
+	protected function resizeImage($src, $width, $height, $dest) : void
 	{
 		require_once(JPATH_ROOT . '/libraries/vendor/phpthumb/phpthumb.class.php');
 
@@ -794,17 +641,17 @@ abstract class JoomShoppingImporter
 	}
 
 
-	public function clearProducts()
+	public function clearProducts() : void
 	{
-		self::logMethodStart(__FUNCTION__);
+		$this->logger->methodStart();
 
-		$this->deleteItems('products', 'product_id', ['product_publish=0', 'vendor_id=' . static::$params['vendor_id']]);
+		$this->deleteItems('products', 'product_id', ['product_publish=0', 'vendor_id=' . $this->id]);
 
-		self::logMethodComplete(__FUNCTION__);
+		$this->logger->methodComplete();
 	}
 
 
-	public function fixCategories()
+	public function fixCategories() : void
 	{
 		$model = $this->getModel('categories');
 
@@ -821,9 +668,9 @@ abstract class JoomShoppingImporter
 			foreach ($categories as $id)
 			{
 				$category->load($id);
-				$childs = $category->getChildCategories();
+				$children = $category->getChildCategories();
 
-				if ($allCatCountProducts[$id] || count($childs))
+				if ($allCatCountProducts[$id] || count($children))
 				{
 					continue;
 				}
@@ -849,103 +696,50 @@ abstract class JoomShoppingImporter
 	}
 
 
-	protected static function loadXML($name)
+	protected function loadXML($name) : ?\SimpleXMLElement
 	{
-		$file = static::$src_path . $name . '.xml';
+		$file = $this->srcPath . $name . '.xml';
 
 		$headers = get_headers($file);
 
 		if (in_array('Content-Type: application/xml', $headers))
 		{
-			self::log('Info: File loaded: ' . $name, 5);
+			$this->logger->info('File loaded: ' . $file);
 
 			return simplexml_load_file($file);
 		}
 		else
 		{
-			self::log('Error: Failed load file: ' . $name, 0);
+			$this->logger->error('Failed load file: ' . $file);
 
 			return null;
 		}
 	}
 
+	public static function getName() : string
+	{
+		static $name = null;
 
-	protected function report()
+		if(!$name)
+		{
+			$parts = explode('\\', static::class);
+			$name = strtolower(str_ireplace('Importer', '', end($parts)));
+		}
+
+		return $name;
+	}
+
+
+	protected function report() : void
 	{
 		foreach ($this->report as $level => $data)
 		{
 			foreach ($data as $key => $value)
 			{
-				$string = self::LOG_LEVEL[$level] . ': ' . $key . ': ' . $value;
-
-				$this->log($string, $level);
+				$this->logger->log($key . ': ' . $value, $level);
 			}
 		}
 
 		$this->report = [];
-	}
-
-
-	protected static function logMethodStart($string)
-	{
-		self::log($string . ' start', 5);
-	}
-
-
-	protected static function logMethodComplete($string)
-	{
-		self::log($string . ' complete', 4);
-	}
-
-
-	protected static function log($string, $level = 4)
-	{
-		if ($level > self::$params['global']['log_level'])
-		{
-			return;
-		}
-
-		$string = static::NAME . ': ' . $string;
-
-		switch (self::$params['global']['log_type'])
-		{
-			case 'print' :
-				if (PHP_SAPI === 'cli')
-				{
-					echo $string . PHP_EOL;
-				}
-				else
-				{
-					var_dump($string);
-				}
-				break;
-			case 'file' :
-				$log_file = (self::$params['global']['log_file']) ?: 'log.txt';
-
-				$handle = fopen(dirname(__DIR__) . '/' . $log_file, 'a');
-
-				static $isLogged = false;
-
-				if ($handle)
-				{
-					fwrite($handle, date('Y.m.d H-i-s') . ': ' . $string . PHP_EOL);
-					fclose($handle);
-				}
-				elseif (!$isLogged)
-				{
-					$isLogged = true;
-
-					echo 'Can not creat LOG file!' . PHP_EOL;
-				}
-				break;
-		}
-	}
-
-
-	protected static function formatByteSize($size)
-	{
-		$unit = array('b', 'kb', 'mb', 'gb', 'tb', 'pb');
-
-		return @round($size / pow(1024, ($i = floor(log($size, 1024)))), 2) . ' ' . $unit[$i];
 	}
 }

@@ -1,0 +1,7 @@
+RewriteEngine on
+RewriteCond %{REMOTE_ADDR} !(127.0.0.1)
+RewriteRule .? - [R=404,L]
+
+#Options All -Indexes
+#Order allow,deny
+#Deny from all

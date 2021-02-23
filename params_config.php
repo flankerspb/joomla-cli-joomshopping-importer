@@ -1,12 +1,19 @@
 <?php
+
+use JoomShoppingImporter\Manager;
+
 define('_JEXEC', 1);
 define('FL_JSHOP_IMPORTER', 1);
 
-require_once(__DIR__ . '/src/JoomShoppingImporter.php');
-JoomShoppingImporter::init();
-
 $self     = basename(__FILE__);
-$cfg_file = JoomShoppingImporter::CFG_PARAMS;
+
+require __DIR__ . '/defines.php';
+require __DIR__ . '/src/Manager.php';
+require __DIR__ . '/src/ImporterInterface.php';
+require __DIR__ . '/src/AbstractImporter.php';
+require __DIR__ . '/src/ImporterPortobello.php';
+require __DIR__ . '/src/ImporterProject111.php';
+require __DIR__ . '/src/Logger.php';
 
 session_start();
 
@@ -24,7 +31,7 @@ if (isset($_GET['action']) && isset($_POST['params']))
 	switch ($_GET['action'])
 	{
 		case 'save':
-			file_put_contents($cfg_file, json_encode($_POST['params'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+			file_put_contents(IMPORTER_CONFIG_FILE, json_encode($_POST['params'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
 			$_SESSION['importer.config.params.result'] = [
 					'status'  => 'success',
@@ -34,7 +41,7 @@ if (isset($_GET['action']) && isset($_POST['params']))
 			break;
 
 		case 'reset':
-			unlink($cfg_file);
+			unlink(IMPORTER_CONFIG_FILE);
 
 			$_SESSION['importer.config.params.result'] = [
 					'status'  => 'warning',
@@ -47,9 +54,7 @@ if (isset($_GET['action']) && isset($_POST['params']))
 	header('Location: ' . $self);
 }
 
-$params = JoomShoppingImporter::$params;
-
-$params = prepareParams($params);
+$params = prepareParams(Manager::prepareConfig());
 
 function prepareParams($array, $root = [])
 {
@@ -103,7 +108,7 @@ function prepareParams($array, $root = [])
 <center>
 	<?php if ($result) : ?>
 		<div>
-			<div class="alert alert-<?php echo $result['status']; ?>"><?php echo $result['message']; ?></div>
+			<div class="alert alert-<?= $result['status']; ?>"><?= $result['message']; ?></div>
 		</div>
 	<?php endif; ?>
 	<form>
@@ -117,17 +122,18 @@ function prepareParams($array, $root = [])
 			<tbody>
 			<?php foreach ($params as $param) :
 
-				$path = '[' . implode('][', $param['path']) . ']';
+				$id = implode('_', $param['path']);
+				$name = '[' . implode('][', $param['path']) . ']';
 				?>
 				<tr>
 					<td>
-						<?php echo str_repeat('&mdash;&nbsp;', $param['level']); ?>
-						<label><?php echo $param['label']; ?></label>
+						<?= str_repeat('&mdash;&nbsp;', $param['level']); ?>
+						<label for="<?= $id ?>"><?= $param['label']; ?></label>
 					</td>
 
 					<td>
 						<?php if (array_key_exists('value', $param)) : ?>
-							<input type="text" name="params<?php echo $path; ?>" value="<?php echo $param['value']; ?>">
+							<input type="text" id="<?= $id ?>" name="params<?= $name; ?>" value="<?= $param['value']; ?>">
 						<?php endif; ?>
 					</td>
 				</tr>
@@ -135,12 +141,12 @@ function prepareParams($array, $root = [])
 			</tbody>
 		</table>
 		<p>
-			<?php if (file_exists($cfg_file)) : ?>
+			<?php if (file_exists(IMPORTER_CONFIG_FILE)) : ?>
 				<input class="btn" type="submit" value="Сбросить" formmethod="post"
-				       formaction="<?php echo $self; ?>?action=reset"/>
+				       formaction="<?= $self; ?>?action=reset"/>
 			<?php endif; ?>
 			<input class="btn btn-primary" type="submit" value="Сохранить" formmethod="post"
-			       formaction="<?php echo $self; ?>?action=save"/>
+			       formaction="<?= $self; ?>?action=save"/>
 		</p>
 	</form>
 </center>

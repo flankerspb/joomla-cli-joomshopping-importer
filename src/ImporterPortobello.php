@@ -1,22 +1,27 @@
 <?php
 
-// TODO: Refactor
+namespace JoomShoppingImporter;
 
-defined('FL_JSHOP_IMPORTER') or die();
+use JFactory;
+use JFilterOutput;
 
-class JoomShoppingImporterPortobello extends JoomShoppingImporter
+class ImporterPortobello extends AbstractImporter
 {
-	const NAME = 'Portobello';
-
 	const DEFAULTS = [
-		'vendor_id' => null, // ID поставщика в базе
+		'vendor_id' => null,
 	];
 
-	protected static $params;
-	protected static $src_path;
+	const PRODUCTS_FILE = 'new-products';
+	const STOCK_FILE    = 'new-products-quantity';
 
 
-	public static function getCategories($parent_id = 0)
+	protected function getSrcPath() : string
+	{
+		return 'https://portobello.ru/export/';
+	}
+
+
+	public function getCategories($parent_id = '')
 	{
 		static $xml;
 		static $json = [];
@@ -26,28 +31,22 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 		if (!$xml)
 		{
-			$xml = self::loadXML('products');
+			$xml = $this->loadXML(self::PRODUCTS_FILE);
 
-
-			if (!$xml)
+			if (file_exists(IMPORTER_CATEGORIES_FILE))
 			{
-				return null;
-			}
-
-			if (file_exists(self::CFG_CATEGORIES))
-			{
-				$json = json_decode(file_get_contents(self::CFG_CATEGORIES), true)[self::$params['vendor_id']];
+				$json = json_decode(file_get_contents(IMPORTER_CATEGORIES_FILE), true)[$this->config['vendor_id']];
 			}
 		}
 
-		foreach ($xml->xpath("//category[@parent_id='{$parent_id}']") as $item)
+		foreach ($xml->xpath("//category[@parentId='{$parent_id}']") as $item)
 		{
 			$id    = (string) $item->attributes()['id'];
 			$title = (string) $item->attributes()['title'];
 
 			$result[$id] = [
 				'id'        => $id,
-				'parent_id' => $parent_id,
+				'parent_id' => $parent_id ?: '0',
 				'title'     => $title,
 				'level'     => $level,
 				'is_new'    => '1',
@@ -64,12 +63,12 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 				$result[$id]['value']     = $json[$id]['value'];
 			}
 
-			$children = $xml->xpath("//category[@parent_id='{$id}']");
+			$children = $xml->xpath("//category[@parentId='{$id}']");
 
 			if (count($children))
 			{
 				$level++;
-				self::getCategories($id);
+				$this->getCategories($id);
 				$level--;
 			}
 		}
@@ -80,22 +79,25 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 	public function updateProducts()
 	{
-		$products = $this->loadXML('products');
+		$products = $this->loadXML(self::PRODUCTS_FILE);
 
 		if ($products)
 		{
 			$this->updateCategories();
 			$this->importManufacturers($products->xpath('products/product/brand'));
+			$this->importPrints($products->xpath('products/product/personalization_list/personalization'));
 			$this->importProducts($products->xpath('products/product'));
 
 			$this->clearProducts();
+
+			$this->updateStock();
 		}
 	}
 
 
 	public function updateStock()
 	{
-		$stock = $this->loadXML('products-quantity');
+		$stock = $this->loadXML(self::STOCK_FILE);
 
 		if ($stock)
 		{
@@ -110,7 +112,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 	protected function importManufacturers($xml)
 	{
-		self::logMethodStart(__FUNCTION__);
+		$this->logger->MethodStart();
 
 		static $model;
 
@@ -135,12 +137,12 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 		{
 			$alias = JFilterOutput::stringURLSafe($brand, 'ru-RU');
 
-			$code = self::$params['vendor_id'] . '_' . $alias;
+			$code = $this->id . '_' . $alias;
 
 			$item =
 				[
-					'fl_code'              => self::$params['vendor_id'] . '_' . $alias,
-					'fl_source'            => self::$params['vendor_id'],
+					'fl_code'              => $this->id . '_' . $alias,
+					'fl_source'            => $this->id,
 					'manufacturer_publish' => 1,
 					'name_ru-RU'           => $brand,
 					'alias_ru-RU'          => $alias,
@@ -157,7 +159,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 			}
 			else
 			{
-				$item['ordering'] = ++self::$counter['manufacturers'];
+				$item['ordering'] = ++$this->counter['manufacturers'];
 
 				$this->report[5]['manufacturers imported'] += 1;
 			}
@@ -167,15 +169,15 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 		$this->report();
 
-		self::logMethodComplete(__FUNCTION__);
+		$this->logger->MethodComplete();
 	}
 
 
 	protected function importProducts($xml)
 	{
-		self::logMethodStart(__FUNCTION__);
+		$this->logger->MethodStart();
 
-		$this->setState(0, 'products', 'vendor_id=' . self::$params['vendor_id']);
+		$this->setState(0, 'products', 'vendor_id=' . $this->id);
 
 		$i = 0;
 
@@ -183,7 +185,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 		{
 			$i++;
 
-			if (!self::$params['full_import'] && ($i % 100) != 0)
+			if (!$this->config['full_import'] && ($i % 200) != 0)
 				continue;
 
 			$this->importProduct($item);
@@ -191,7 +193,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 		$this->report();
 
-		self::logMethodComplete(__FUNCTION__);
+		$this->logger->MethodComplete();
 	}
 
 
@@ -202,7 +204,6 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 		static $init = false;
 		static $model;
 		static $products;
-		static $categories;
 		static $manufacturers;
 
 		if (!$init)
@@ -210,13 +211,13 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 			$model = $this->getModel('products');
 
 			$products      = $this->getList('products', 'product_ean', 'product_id');
-			$categories    = $this->getList('categories', 'fl_code', 'category_id');
+			$prints        = $this->getList('productFieldValues', 'fl_code', 'id', ['field_id=' . $this->config['fields']['print'], 'fl_source=' . $this->id]);
 			$manufacturers = $this->getList('manufacturers', 'name_ru-RU', 'manufacturer_id');
 
 			$init = true;
 		}
 
-		$category = $this->getProductCategory((string) $xml->category_id, self::$params['vendor_id']);
+		$category = $this->getProductCategory((string) $xml->categoryId, $this->id);
 
 		if (!$category)
 		{
@@ -229,11 +230,13 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 		$name  = trim((string) $xml->title);
 		$brand = $manufacturers[trim((string) $xml->brand)];
 
-		$code = self::$params['vendor_id'] . '_' . (string) $xml->articul;
+		$code = $this->id . '_' . (string) $xml->articul;
 
 		$item =
 			[
 				'parent_id' => 0,
+
+				'fl_products_group' => ((string) $xml->model != (string) $xml->articul) ? (string) $xml->model : '',
 
 				'product_ean'       => $code,
 				'manufacturer_code' => (string) $xml->articul,
@@ -241,11 +244,11 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 				'product_quantity'     => 0,
 				'product_availability' => 0,
 
-				'date_modify' => JFactory::getDate('now', self::$timeZone)->toSql(true),
+				'date_modify' => JFactory::getDate('now', $this->timeZone)->toSql(true),
 
 				'product_publish' => 1,
-				'product_tax_id'  => self::$params['tax_id'],
-				'currency_id'     => self::$params['currency_id'],
+				'product_tax_id'  => $this->config['tax_id'],
+				'currency_id'     => $this->config['currency_id'],
 
 				// 'product_weight' => (string)$xml->weight,
 
@@ -253,7 +256,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 				'label_id' => $label,
 
-				'vendor_id' => self::$params['vendor_id'],
+				'vendor_id' => $this->id,
 
 				'name_ru-RU'        => $name,
 				'alias_ru-RU'       => JFilterOutput::stringURLSafe($name, 'ru-RU'),
@@ -279,35 +282,70 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 		if ($xml->collection)
 		{
-			$item['extra_field_' . self::$params['fields']['group']] = (string) $xml->category_id . '-' . (string) $xml->brand . '-' . (string) $xml->collection;
+			$item['extra_field_' . $this->config['fields']['group']] = (string) $xml->category_id . '-' . (string) $xml->brand . '-' . (string) $xml->collection;
 		}
 
-		if ($xml->size)
+		if ($xml->width)
 		{
-			$size = explode('/', (string) $xml->size);
-
-			if ($size[0])
-			{
-				$item['extra_field_' . self::$params['fields']['sizex']] = $size[0];
-			}
-
-			if ($size[1])
-			{
-				$item['extra_field_' . self::$params['fields']['sizey']] = $size[1];
-			}
-
-			if ($size[2])
-			{
-				$item['extra_field_' . self::$params['fields']['sizez']] = $size[2];
-			}
+			$item['extra_field_' . $this->config['fields']['sizex']] = (string) $xml->width;
 		}
 
-		$price = $xml->xpath("price/name[.='End-User']/parent::*/value");
+		if ($xml->height)
+		{
+			$item['extra_field_' . $this->config['fields']['sizey']] = (string) $xml->height;
+		}
+
+		if ($xml->length)
+		{
+			$item['extra_field_' . $this->config['fields']['sizez']] = (string) $xml->length;
+		}
 
 		if ($xml->price)
 		{
 			$item['product_price'] = (string) $xml->price;
 		}
+
+		if((float)$xml->price_old && (float)$xml->price_old < (float)$xml->price)
+		{
+			$item['product_old_price'] = (string) $xml->price_old;
+		}
+
+		if ($xml->specials)
+		{
+			foreach ($xml->specials->value as $value)
+			{
+				$value = strtolower((string)$value);
+
+				switch ($value) {
+					case 'новинка':
+						$item['label_id'] = $this->config['product_label_new'];
+						break;
+					default:
+						continue 2;
+						break;
+				}
+			}
+		}
+
+
+		if ($xml->personalization_list && $this->config['fields']['print'])
+		{
+			foreach ($xml->personalization_list as $print)
+			{
+				$print_code = $this->id . '_' . $this->config['fields']['print'] . '-' . (string) $print->code;
+
+				if ($prints[$print_code])
+				{
+					$fields['extra_field_' . $this->config['fields']['print']][] = $prints[$print_code];
+				}
+			}
+
+			$item['attrib_ind_id']        = [$this->config['attribs']['print'], $this->config['attribs']['print']];
+			$item['attrib_ind_value_id']  = explode(',', $this->config['attribs_defaults']['print']);
+			$item['attrib_ind_price_mod'] = ['+', '+'];
+			$item['attrib_ind_price']     = ['0', '0'];
+		}
+
 
 		$fields = [];
 
@@ -331,7 +369,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 			}
 		}
 
-		$item = array_merge($item, self::setImages($images, $item['product_id'], self::$params['vendor_id'], ''));
+		$item = array_merge($item, self::setImages($images, $item['product_id'], $this->id, ''));
 
 		$model->save($item);
 	}
@@ -339,7 +377,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 	protected function importStock($xml)
 	{
-		self::logMethodStart(__FUNCTION__);
+		$this->logger->MethodStart();
 
 		$products = $this->getList('products', 'product_ean', 'product_id');
 
@@ -347,7 +385,7 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 		{
 			if ($name == 'product')
 			{
-				$code = self::$params['vendor_id'] . '_' . (string) $item->articul;
+				$code = $this->id . '_' . (string) $item->articul;
 
 				if (array_key_exists($code, $products))
 				{
@@ -364,17 +402,90 @@ class JoomShoppingImporterPortobello extends JoomShoppingImporter
 
 		$this->report();
 
-		self::logMethodComplete(__FUNCTION__);
+		$this->logger->MethodComplete();
 	}
 
 
-	protected static function getSrcPath($debug)
+	protected function importPrints($xml)
 	{
-		if ($debug)
+		$this->logger->MethodStart();
+
+		$tmp = [];
+
+		foreach ($xml as $key => $print)
 		{
-			return parent::getSrcPath($debug) . 'portobello/';
+			$code = trim((string) $print->code);
+
+			if (array_key_exists($code, $tmp))
+			{
+				unset($xml[$key]);
+			}
+			else
+			{
+				$tmp[$code] = '';
+			}
 		}
 
-		return 'http://ebazaar.ru/export/';
+		$this->importFieldValues($xml, $this->config['fields']['print'], 'print');
+
+		$this->logger->MethodComplete();
+	}
+
+
+	protected function importFieldValues($xml, $field_id, $type)
+	{
+		static $model;
+
+		if (!$model)
+		{
+			$model = $this->getModel('productFieldValues');
+			$this->setState(0, 'productFieldValues', 'fl_source=' . $this->id);
+		}
+
+		foreach ($xml as $value)
+		{
+			switch ($type)
+			{
+				case 'filter':
+					$id   = $value->filterid;
+					$name = trim((string) $value->filtername);
+					break;
+				case 'print':
+					$id   = (string) $value->code;
+					$name = (string) $value->name;
+					break;
+				default:
+
+					return;
+			}
+
+			$code = $this->id . '_' . $field_id . '-' . $id;
+
+			$item = array(
+				'fl_code'    => $code,
+				'fl_source'  => $this->id,
+				'fl_state'   => 1,
+				'field_id'   => $field_id,
+				'name_ru-RU' => $name,
+			);
+
+			$tmp = $this->getItem($code, 'productFieldValues');
+
+			if ($tmp)
+			{
+				$item['id']       = $tmp['id'];
+				$item['ordering'] = $tmp['ordering'];
+
+				$action = 'update';
+			}
+			else
+			{
+				$action = 'import';
+
+				$item['ordering'] = ++$this->counter['productFieldValues'];
+			}
+
+			$model->save($item);
+		}
 	}
 }

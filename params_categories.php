@@ -1,18 +1,21 @@
 <?php
+
+use JoomShoppingImporter\Manager;
+
 define('_JEXEC', 1);
 define('FL_JSHOP_IMPORTER', 1);
 
-require_once __DIR__ . '/src/JoomShoppingImporter.php';
+require __DIR__ . '/defines.php';
+require __DIR__ . '/src/Manager.php';
+require __DIR__ . '/src/ImporterInterface.php';
+require __DIR__ . '/src/AbstractImporter.php';
+require __DIR__ . '/src/ImporterPortobello.php';
+require __DIR__ . '/src/ImporterProject111.php';
+require __DIR__ . '/src/Logger.php';
 
-$options = [
-	// 'debug' => 0,
-	// 'log_type' => '',
-];
-
-JoomShoppingImporter::init($options);
-
-$params         = JoomShoppingImporter::$params;
-$cfg_categories = JoomShoppingImporter::CFG_CATEGORIES;
+$manager = new Manager(617, 'ru-RU');
+$config = $manager->getConfig();
+$importers = $manager::getListImporters();
 
 session_start();
 
@@ -25,18 +28,18 @@ if (isset($_SESSION['importer.config.categories.result']))
 	unset($_SESSION['importer.config.categories.result']);
 }
 
-$importer = null;
+$vendor = null;
 $cats     = [];
 
 $self = basename(__FILE__);
 
-if (isset($_GET['importer']) && array_key_exists($_GET['importer'], JoomShoppingImporter::$children))
+if (isset($_GET['importer']) && array_key_exists($_GET['importer'], $importers))
 {
-	$importer = $_GET['importer'];
+	$vendor = $_GET['importer'];
 
-	$cats = JoomShoppingImporter::getCategories($importer);
+	$cats = $manager->getImporter($vendor)->getCategories();
 
-	$page = $self . '?importer=' . $importer;
+	$page = $self . '?importer=' . $vendor;
 }
 
 
@@ -54,18 +57,18 @@ if (isset($_GET['action']) && isset($_POST['categories']))
 			// }
 			// }
 
-			if (file_exists($cfg_categories))
+			if (file_exists(IMPORTER_CATEGORIES_FILE))
 			{
-				$categories = json_decode(file_get_contents($cfg_categories), true);
+				$categories = json_decode(file_get_contents(IMPORTER_CATEGORIES_FILE), true);
 			}
 			else
 			{
 				$categories = [];
 			}
 
-			$categories[$params[$importer]['vendor_id']] = $_POST['categories'];
+			$categories[$config[$vendor]['vendor_id']] = $_POST['categories'];
 
-			file_put_contents($cfg_categories, json_encode($categories, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+			file_put_contents(IMPORTER_CATEGORIES_FILE, json_encode($categories, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 
 			$_SESSION['importer.config.categories.result'] = [
 					'status'  => 'success',
@@ -75,7 +78,7 @@ if (isset($_GET['action']) && isset($_POST['categories']))
 			break;
 
 		case 'reset':
-			unlink($cfg_categories);
+			unlink(IMPORTER_CATEGORIES_FILE);
 
 			$_SESSION['importer.config.categories.result'] = [
 					'status'  => 'warning',
@@ -92,7 +95,7 @@ function getImporterOptions($importer)
 {
 	$_result = [];
 
-	foreach (JoomShoppingImporter::$children as $key => $value)
+	foreach (Manager::getListImporters() as $key => $value)
 	{
 		$selected = ($importer == $key) ? ' selected' : '';
 
@@ -130,8 +133,8 @@ function getActionOptions($item)
 <head>
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
-	<?php if ($importer) : ?>
-		<title>Categories - <?php echo $importer; ?></title>
+	<?php if ($vendor) : ?>
+		<title>Categories - <?php echo $vendor; ?></title>
 	<?php else : ?>
 		<title>Categories - Select importer</title>
 	<?php endif; ?>
@@ -159,12 +162,12 @@ function getActionOptions($item)
 	<?php endif; ?>
 	<form>
 		<select name="importer">
-			<?php echo getImporterOptions($importer); ?>
+			<?php echo getImporterOptions($vendor); ?>
 		</select>
 		<input class="btn btn-primary" type="submit" value="Выбрать" formmethod="get"
 		       formaction="<?php echo $self; ?>"/>
 	</form>
-	<?php if ($importer) : ?>
+	<?php if ($vendor) : ?>
 		<form>
 			<table class="table table-striped table-hover table-condensed">
 				<thead>

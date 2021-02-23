@@ -1,13 +1,5 @@
 {
-    "global": {
-        "debug": "1",
-        "debug_path": "http://localhost/test_files/",
-        "full_import": "0",
-        "log_level": "10",
-        "log_type": "print",
-        "log_file": "",
-        "lang_code": "ru-RU",
-        "user_id": "617",
+    "common": {
         "primary_vendor_id": "2",
         "currency_id": "1",
         "tax_id": "1",
@@ -23,7 +15,10 @@
             "sizex": "7",
             "sizey": "8",
             "sizez": "9",
-            "print": "10"
+            "print": "10",
+            "dated": "0",
+            "color": "0",
+            "cover": "0"
         },
         "attribs": {
             "size": "1",
